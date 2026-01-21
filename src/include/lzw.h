@@ -23,8 +23,21 @@
 
 #include "any_length_numeric.h"
 #include <vector>
+#include "tsl/hopscotch_map.h"
 
 namespace lzw {
+	struct section_head_16bit_t {
+		uint16_t section_size;
+	};
+
+	struct section_head_32bit_t {
+		uint32_t section_size;
+	};
+
+	struct section_head_64bit_t {
+		uint64_t section_size;
+	};
+
 	template <typename Type>
 	constexpr Type two_power(const Type n)
 	{
@@ -40,7 +53,7 @@ namespace lzw {
 	{
 		std::vector < uint8_t > & input_stream_;
 		std::vector < uint8_t > & output_stream_;
-		std::unordered_map < std::string, any_length_numeric < LzwCompressionBitSize > > dictionary_;
+		tsl::hopscotch_map < std::string, any_length_numeric < LzwCompressionBitSize > > dictionary_;
 		bool discarding_this_instance = false;
 
 	public:

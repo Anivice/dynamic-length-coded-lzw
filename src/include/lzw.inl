@@ -22,12 +22,13 @@
 #define LZW_INL
 
 #include <algorithm>
+#include "tsl/hopscotch_map.h"
 
 template < unsigned LzwCompressionBitSize >
 struct std::hash < lzw::any_length_numeric<LzwCompressionBitSize> >
 {
     size_t operator()(const lzw::any_length_numeric<LzwCompressionBitSize>& b) const {
-        return static_cast<size_t>(b.template export_numeric<size_t>());
+        return static_cast<size_t>((size_t)b);
     }
 };
 
@@ -102,8 +103,8 @@ namespace lzw
 
         // Write the compressed data to the output stream
         const auto [vec, nrm] = pack_numeric(result_stack);
-        output_stream_.push_back(*reinterpret_cast<const uint8_t *>(&nrm));
         output_stream_.insert_range(output_stream_.end(), vec);
+        output_stream_.push_back(*reinterpret_cast<const uint8_t *>(&nrm));
 
         // discarding this instance
         discarding_this_instance = true;
@@ -123,7 +124,7 @@ namespace lzw
             return;
         }
 
-        std::unordered_map < any_length_numeric < LzwCompressionBitSize >, std::string > dictionary_flipped;
+        tsl::hopscotch_map < any_length_numeric < LzwCompressionBitSize >, std::string > dictionary_flipped;
         std::vector<uint8_t> source_dump;
         std::string current_string{};
         std::vector < any_length_numeric < LzwCompressionBitSize > > source_stack;
@@ -140,7 +141,9 @@ namespace lzw
         }
 
         // import source to stack
-        source_stack = unpack_numeric<LzwCompressionBitSize>(source_dump);
+        const uint8_t nrm = source_dump.back();
+        source_dump.pop_back();
+        source_stack = unpack_numeric<LzwCompressionBitSize>(source_dump, nrm);
 
         // Initialize the flipped dictionary
         for (int i = 0; i < 256; ++i) {
@@ -149,8 +152,8 @@ namespace lzw
         }
 
         // The first code is popped out and assigned to current_string
-        current_string = static_cast<char>(source_stack[0].template export_numeric_force<uint8_t>());
-        output_stream_.push_back(dictionary_.at(current_string).template export_numeric_force<uint8_t>());
+        current_string = static_cast<char>((uint8_t)(uint64_t)source_stack[0]);
+        output_stream_.push_back((uint8_t)(uint64_t)dictionary_.at(current_string));
 
         for (uint64_t i = 1; i < source_stack.size(); i++)
         {

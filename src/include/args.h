@@ -6,10 +6,16 @@
 #include <string>
 #include <utility>
 #include <vector>
-#include "error.h"
 
-make_simple_error_class(no_such_argument)
-make_simple_error_class(argument_parser_exception)
+namespace lzw::error {
+    class no_such_argument final : public std::invalid_argument {
+    public: explicit no_such_argument(const std::string & msg) : std::invalid_argument(msg) { }
+    };
+
+    class argument_parser_exception final : public std::runtime_error {
+    public: explicit argument_parser_exception(const std::string & msg) : std::runtime_error(msg) { }
+    };
+}
 
 namespace lzw::utils
 {

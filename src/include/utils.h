@@ -105,7 +105,4 @@ namespace lzw::utils
     name(name &&) = delete;                                     \
     name & operator=(name &&) = delete;
 
-#include "colors.h"
-#include "logger.h"
-
 #endif //CFS_UTILS_H

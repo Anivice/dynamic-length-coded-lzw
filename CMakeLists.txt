@@ -6,11 +6,7 @@ include_directories(src/include)
 add_compile_definitions(VERSION="0.0.1")
 
 add_library(liblzw STATIC
-        src/backtracer/error.cpp                src/include/error.h
-        src/misc/color.cpp                      src/include/colors.h
         src/misc/utils.cpp                      src/include/utils.h
-        src/misc/execute.cpp                    src/include/execute.h
-        src/misc/logger.cpp                     src/include/logger.h
         src/misc/args.cpp                       src/include/args.h
         src/lzw/mmap.cpp                        src/include/mmap.h
         src/include/any_length_numeric.h

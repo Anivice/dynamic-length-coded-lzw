@@ -235,8 +235,7 @@ namespace lzw {
                         return data;
                     case CELL_01_is_0:
                         return 0;
-                    default:
-                        lzw_assert_simple(false);
+                    default: ;
                 }
             }
 
