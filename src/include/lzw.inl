@@ -102,11 +102,7 @@ namespace lzw {
         }
 
         // Write the compressed data to the output stream
-        for (const auto dumped_data = result_stack.dump();
-            const auto& byte : dumped_data)
-        {
-            output_stream_.push_back(byte);
-        }
+        output_stream_.insert_range(output_stream_.end(), result_stack.export_array());
 
         // discarding this instance
         discarding_this_instance = true;
@@ -143,7 +139,7 @@ namespace lzw {
         }
 
         // import source to stack
-        source_stack.lazy_import(source_dump);
+        source_stack.lazy_import_array(source_dump);
 
         // Initialize the flipped dictionary
         for (int i = 0; i < 256; ++i) {

@@ -121,34 +121,34 @@ namespace lzw {
     template < unsigned BitSize >
     class bitwise_numeric_stack {
     private:
-        std::vector< bitwise_numeric < BitSize > > stack_frame_;
+        std::vector< bitwise_numeric < BitSize > > stack_;
         const unsigned current_bit_size = BitSize;
         const unsigned required_byte_blocks = BitSize / 8 + (BitSize % 8 == 0 ? 0 : 1);
         const unsigned additional_tailing_bits = BitSize % 8;
 
     public:
         void push(const bitwise_numeric<BitSize> & element) {
-            stack_frame_.emplace_back(element);
+            stack_.emplace_back(element);
         }
 
         void pop() {
-            stack_frame_.pop_back();
+            stack_.pop_back();
         }
 
         [[nodiscard]] uint64_t size() const {
-            return stack_frame_.size();
+            return stack_.size();
         }
 
         [[nodiscard]] const bitwise_numeric<BitSize> & top() {
-            return stack_frame_.back();
+            return stack_.back();
         }
 
         [[nodiscard]] bitwise_numeric<BitSize>& at(const uint64_t index) {
-            return stack_frame_[index];
+            return stack_[index];
         }
 
         [[nodiscard]] bitwise_numeric<BitSize>& operator [](const uint64_t index) {
-            return stack_frame_[index];
+            return stack_[index];
         }
 
         template < typename Numeric >
@@ -158,10 +158,9 @@ namespace lzw {
             push(bitwise_numeric<BitSize>::make_bitwise_numeric(static_cast<unsigned_type>(number)));
         }
 
-        [[nodiscard]] std::vector<uint8_t> dump() const;
-        void import(const std::vector<uint8_t> &, uint64_t);
-        void lazy_import(const std::vector<uint8_t>&);
-        [[nodiscard]] uint64_t hash() const;
+        [[nodiscard]] std::vector<uint8_t> export_array() const;
+        void import_array(const std::vector<uint8_t> &, uint64_t);
+        void lazy_import_array(const std::vector<uint8_t>&);
     };
 }
 

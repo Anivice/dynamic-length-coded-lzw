@@ -34,6 +34,7 @@ namespace lzw {
         uint64_t,
         uint8_t,
         uint8_t,
+        std::vector<uint8_t> &,
         const std::vector < uint8_t >&);
 
     template < unsigned BitSize >
@@ -751,7 +752,7 @@ namespace lzw {
     }
 
     template<unsigned BitSize>
-    std::vector<uint8_t> bitwise_numeric_stack<BitSize>::dump() const
+    std::vector<uint8_t> bitwise_numeric_stack<BitSize>::export_array() const
     {
         struct conjunct_result
         {
@@ -802,7 +803,7 @@ namespace lzw {
         std::vector<uint8_t> ret{};
         conjunct_result result_holder {};
         bool processed_for_result_holder = false;
-        for (const auto & numeric : stack_frame_)
+        for (const auto & numeric : stack_)
         {
             // result is empty?
             if (!processed_for_result_holder)
@@ -862,6 +863,7 @@ namespace lzw {
         const uint64_t byte_starting,
         const uint8_t bit_starting,
         const uint8_t bit_size,
+        std::vector < uint8_t > & result,
         const std::vector < uint8_t > & data)
     {
         if (bit_starting > 8)
@@ -897,7 +899,7 @@ namespace lzw {
         }
 
         // return the result
-        std::vector < uint8_t > result{};
+        result.reserve(utils::arithmetic::count_cell_with_cell_size(8, bit_size));
 
         // we need to stitch the unpacked bytes, logic is exactly like dump()
         struct conjunct_result
@@ -1001,13 +1003,15 @@ namespace lzw {
     }
 
     template<unsigned BitSize>
-    void bitwise_numeric_stack<BitSize>::import(const std::vector<uint8_t>& data, const uint64_t expected_len)
+    void bitwise_numeric_stack<BitSize>::import_array(const std::vector<uint8_t>& data, const uint64_t expected_len)
     {
         // clear stack
-        stack_frame_.clear();
+        stack_.clear();
+        stack_.reserve(expected_len);
 
         uint64_t byte_offset = 0;
         uint8_t bit_offset = 0;
+        std::vector<uint8_t> bitcopy_buffer;
 
         auto add_offset = [&](const uint8_t off)->void {
             // add offset
@@ -1032,84 +1036,35 @@ namespace lzw {
             numeric.data.back().bit = additional_tailing_bits;
 
             // push to stack
-            stack_frame_.push_back(numeric);
+            stack_.push_back(numeric);
         };
 
         // import bits by bits
         for (uint64_t i = 0; i < expected_len; i++)
         {
             // copy bits over
+            bitcopy_buffer.clear();
             auto result =
                 bitcopy<BitSize>(
                     byte_offset,
                     bit_offset,
                     static_cast<uint8_t>(BitSize),
+                    bitcopy_buffer, // used to decrease allocator cost
                     data);
             // increase offset
             add_offset(BitSize);
 
             // import result
             import_numeric(result);
-            //debug::log(result, "\n");
         }
     }
 
     template<unsigned BitSize>
-    void bitwise_numeric_stack<BitSize>::lazy_import(const std::vector<uint8_t> & data)
+    void bitwise_numeric_stack<BitSize>::lazy_import_array(const std::vector<uint8_t> & data)
     {
         // packed data to original length
         const auto import_length = data.size() * 8 /* bits */ / BitSize;
-        import(data, import_length);
-    }
-
-    template <unsigned BitSize>
-    uint64_t bitwise_numeric_stack<BitSize>::hash() const
-    {
-        uint64_t crc64_value{};
-        uint64_t table[256]{};
-
-        auto init_crc64 = [&]()
-        {
-            crc64_value = 0xFFFFFFFFFFFFFFFF;
-            for (uint64_t i = 0; i < 256; ++i) {
-                uint64_t crc = i;
-                for (uint64_t j = 8; j--; ) {
-                    if (crc & 1)
-                        crc = (crc >> 1) ^ 0xC96C5795D7870F42;  // Standard CRC-64 polynomial
-                    else
-                        crc >>= 1;
-                }
-                table[i] = crc;
-            }
-        };
-
-        auto reverse_bytes = [](uint64_t x)->uint64_t
-        {
-            x = ((x & 0x00000000FFFFFFFFULL) << 32) | ((x & 0xFFFFFFFF00000000ULL) >> 32);
-            x = ((x & 0x0000FFFF0000FFFFULL) << 16) | ((x & 0xFFFF0000FFFF0000ULL) >> 16);
-            x = ((x & 0x00FF00FF00FF00FFULL) << 8) | ((x & 0xFF00FF00FF00FF00ULL) >> 8);
-            return x;
-        };
-
-        auto update = [&](const uint8_t* data, const size_t length)
-        {
-            for (size_t i = 0; i < length; ++i) {
-                crc64_value = table[(crc64_value ^ data[i]) & 0xFF] ^ (crc64_value >> 8);
-            }
-        };
-
-        auto get_checksum = [&](const endian_t endian)->uint64_t
-        {
-            // add the final complement that ECMA-182 requires
-            return (endian == big_endian
-                ? reverse_bytes(crc64_value ^ 0xFFFFFFFFFFFFFFFFULL)
-                : (crc64_value ^ 0xFFFFFFFFFFFFFFFFULL));
-        };
-
-        init_crc64();
-        const auto dumped = dump();
-        update(dumped.data(), dumped.size());
-        return get_checksum(big_endian);
+        import_array(data, import_length);
     }
 }
 
