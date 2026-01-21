@@ -22,18 +22,18 @@
 #define LZW_INL
 
 #include <algorithm>
-#include "tsl/hopscotch_map.h"
+#include <cstring>
+#include <string>
 
 template < unsigned LzwCompressionBitSize >
-struct std::hash < lzw::any_length_numeric<LzwCompressionBitSize> >
+struct std::hash < lzw::bitwise_numeric<LzwCompressionBitSize> >
 {
-    size_t operator()(const lzw::any_length_numeric<LzwCompressionBitSize>& b) const {
-        return static_cast<size_t>((size_t)b);
+    size_t operator()(const lzw::bitwise_numeric<LzwCompressionBitSize>& b) const {
+        return static_cast<size_t>(b.template export_numeric<size_t>());
     }
 };
 
-namespace lzw
-{
+namespace lzw {
     template < unsigned LzwCompressionBitSize, unsigned DictionarySize >
         requires (LzwCompressionBitSize > 8)
     lzw<LzwCompressionBitSize, DictionarySize>::lzw(
@@ -45,7 +45,7 @@ namespace lzw
         // Initialize the dictionary
         for (int i = 0; i < 256; ++i) {
             dictionary_.emplace(std::string(1, static_cast<char>(i)),
-                any_length_numeric<LzwCompressionBitSize>::make_any(i));
+                bitwise_numeric<LzwCompressionBitSize>::make_bitwise_numeric_loosely(i));
         }
     }
 
@@ -64,9 +64,9 @@ namespace lzw
         }
 
         std::string current_string {};
-        std::vector < any_length_numeric < LzwCompressionBitSize > > result_stack;
-        any_length_numeric <LzwCompressionBitSize> next_code =
-            any_length_numeric < LzwCompressionBitSize>::make_any(256);
+        bitwise_numeric_stack < LzwCompressionBitSize > result_stack;
+        bitwise_numeric<LzwCompressionBitSize> next_code =
+            bitwise_numeric < LzwCompressionBitSize>::make_bitwise_numeric_loosely(256);
 
         // Compression process
         std::ranges::reverse(input_stream_);
@@ -84,9 +84,9 @@ namespace lzw
             else
             {
                 // Output the code for current string
-                result_stack.push_back(dictionary_.at(current_string));
+                result_stack.push(dictionary_.at(current_string));
                 // Add combined_string to the dictionary
-                if (next_code < next_code.make_any(DictionarySize)) {
+                if (next_code < next_code.make_bitwise_numeric(DictionarySize)) {
                     dictionary_.emplace(combined_string, next_code);
                     ++next_code;
                 }
@@ -98,13 +98,15 @@ namespace lzw
 
         // Output the last code if any
         if (!current_string.empty()) {
-            result_stack.push_back(dictionary_[current_string]);
+            result_stack.push(dictionary_[current_string]);
         }
 
         // Write the compressed data to the output stream
-        const auto [vec, nrm] = pack_numeric(result_stack);
-        output_stream_.insert_range(output_stream_.end(), vec);
-        output_stream_.push_back(*reinterpret_cast<const uint8_t *>(&nrm));
+        for (const auto dumped_data = result_stack.dump();
+            const auto& byte : dumped_data)
+        {
+            output_stream_.push_back(byte);
+        }
 
         // discarding this instance
         discarding_this_instance = true;
@@ -124,12 +126,12 @@ namespace lzw
             return;
         }
 
-        tsl::hopscotch_map < any_length_numeric < LzwCompressionBitSize >, std::string > dictionary_flipped;
-        std::vector<uint8_t> source_dump;
+        tsl::hopscotch_map < bitwise_numeric < LzwCompressionBitSize >, std::string > dictionary_flipped;
+        std::vector <uint8_t> source_dump;
         std::string current_string{};
-        std::vector < any_length_numeric < LzwCompressionBitSize > > source_stack;
-        any_length_numeric <LzwCompressionBitSize> next_code =
-            any_length_numeric < LzwCompressionBitSize >::make_any(255);
+        bitwise_numeric_stack < LzwCompressionBitSize > source_stack;
+        bitwise_numeric<LzwCompressionBitSize> next_code =
+            bitwise_numeric < LzwCompressionBitSize>::make_bitwise_numeric_loosely(255);
 
         // dump source
         std::ranges::reverse(input_stream_);
@@ -141,19 +143,17 @@ namespace lzw
         }
 
         // import source to stack
-        const uint8_t nrm = source_dump.back();
-        source_dump.pop_back();
-        source_stack = unpack_numeric<LzwCompressionBitSize>(source_dump, nrm);
+        source_stack.lazy_import(source_dump);
 
         // Initialize the flipped dictionary
         for (int i = 0; i < 256; ++i) {
-            dictionary_flipped.emplace(any_length_numeric<LzwCompressionBitSize>::make_any(i),
+            dictionary_flipped.emplace(bitwise_numeric<LzwCompressionBitSize>::make_bitwise_numeric_loosely(i),
                 std::string(1, static_cast<char>(i)));
         }
 
         // The first code is popped out and assigned to current_string
-        current_string = static_cast<char>((uint8_t)(uint64_t)source_stack[0]);
-        output_stream_.push_back((uint8_t)(uint64_t)dictionary_.at(current_string));
+        current_string = static_cast<char>(source_stack[0].template export_numeric_force<uint8_t>());
+        output_stream_.push_back(dictionary_.at(current_string).template export_numeric_force<uint8_t>());
 
         for (uint64_t i = 1; i < source_stack.size(); i++)
         {
@@ -190,4 +190,5 @@ namespace lzw
         discarding_this_instance = true;
     }
 }
+
 #endif // LZW_INL

@@ -21,30 +21,10 @@
 #ifndef LZW_H
 #define LZW_H
 
-#include "any_length_numeric.h"
-#include <vector>
+#include "numeric.h"
 #include "tsl/hopscotch_map.h"
 
 namespace lzw {
-	struct section_head_16bit_t {
-		uint16_t section_size;
-	};
-
-	struct section_head_32bit_t {
-		uint32_t section_size;
-	};
-
-	struct section_head_64bit_t {
-		uint64_t section_size;
-	};
-
-	template <typename Type>
-	constexpr Type two_power(const Type n)
-	{
-		static_assert(std::is_integral_v<Type>, "Type must be an integral type");
-		return static_cast<Type>(0x01) << n;
-	}
-
 	template <
 		unsigned LzwCompressionBitSize,
 		unsigned DictionarySize = two_power(LzwCompressionBitSize) - 1 >
@@ -53,7 +33,7 @@ namespace lzw {
 	{
 		std::vector < uint8_t > & input_stream_;
 		std::vector < uint8_t > & output_stream_;
-		tsl::hopscotch_map < std::string, any_length_numeric < LzwCompressionBitSize > > dictionary_;
+		tsl::hopscotch_map < std::string, bitwise_numeric < LzwCompressionBitSize > > dictionary_;
 		bool discarding_this_instance = false;
 
 	public:
@@ -74,8 +54,8 @@ namespace lzw {
 		void compress();
 		void decompress();
 	};
-
 }
+
 #endif //LZW_H
 
 // inline definition for lzw utilities

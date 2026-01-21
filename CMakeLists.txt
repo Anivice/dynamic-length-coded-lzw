@@ -9,8 +9,8 @@ add_library(liblzw STATIC
         src/misc/utils.cpp                      src/include/utils.h
         src/misc/args.cpp                       src/include/args.h
         src/lzw/mmap.cpp                        src/include/mmap.h
-        src/include/any_length_numeric.h
-        src/include/lzw.h                       src/include/lzw.inl
+        src/include/lzw.inl                     src/include/lzw.h
+        src/include/numeric.inl                 src/include/numeric.h
 )
 target_link_libraries(liblzw PUBLIC atomic)
 

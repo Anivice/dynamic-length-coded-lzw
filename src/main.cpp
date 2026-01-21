@@ -19,6 +19,12 @@ utils::PreDefinedArgumentType::PreDefinedArgument MainArgument = {
     { .short_name = 'i', .long_name = "input",      .argument_required = true,  .description = "Input file" },
     { .short_name = 'o', .long_name = "output",     .argument_required = true,  .description = "Output file" },
     { .short_name = 'd', .long_name = "decompress", .argument_required = false, .description = "Decompress instead of compress" },
+    { .short_name = 'T', .long_name = "threads",    .argument_required = true,  .description = "Specify the number of worker threads" },
+};
+
+
+struct section_head_16bit_t {
+    uint16_t section_size;
 };
 
 int main(int argc, char** argv)
@@ -57,13 +63,21 @@ int main(int argc, char** argv)
         constexpr uint64_t bit_size = 12;
         constexpr uint64_t block_size = lzw::two_power(bit_size) - 1;
         bool compress = !parsed.contains("decompress");
+        int workers = std::thread::hardware_concurrency();
+        if (parsed.contains("threads")) {
+            try {
+                workers = std::strtoul(parsed.at("threads").c_str(), nullptr, 10);
+            } catch (...) {
+                std::cerr << "Malformed thread number, ignored" << std::endl;
+            }
+        }
 
         if (compress)
         {
             const auto blocks = lzw::utils::arithmetic::count_cell_with_cell_size(block_size, input_mmap.size());
             struct pool_frame_t {
                 std::vector<uint8_t> output;
-                lzw::section_head_16bit_t section_head { };
+                section_head_16bit_t section_head { };
                 uint64_t index { };
             };
 
@@ -100,7 +114,7 @@ int main(int argc, char** argv)
 
                 active_threads++;
 
-                if (active_threads == std::thread::hardware_concurrency()) {
+                if (active_threads >= workers) {
                     sync_thread();
                     active_threads = 0;
                 }
@@ -130,9 +144,9 @@ int main(int argc, char** argv)
             };
 
             uint64_t offset = 0;
-            auto read_head = [&]()->lzw::section_head_16bit_t
+            auto read_head = [&]()->section_head_16bit_t
             {
-                lzw::section_head_16bit_t ret { };
+                section_head_16bit_t ret { };
                 std::memcpy(&ret, input_mmap.data() + offset, sizeof(ret));
                 offset += sizeof(ret);
                 return ret;
@@ -155,7 +169,7 @@ int main(int argc, char** argv)
 
                 active_threads++;
 
-                if (active_threads == std::thread::hardware_concurrency()) {
+                if (active_threads >= workers) {
                     sync_thread();
                     active_threads = 0;
                 }
