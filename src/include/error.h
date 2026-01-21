@@ -36,9 +36,9 @@ namespace lzw::error                                                            
         {                                                                                       \
             msg_conj(#name ": ");                                                               \
             (msg_conj(args), ...);                                                              \
-            lzw::utils::replace_all(message, "<INSERT ERROR MESSAGE HERE>", oss.str());         \
+            ::lzw::utils::replace_all(message, "<INSERT ERROR MESSAGE HERE>", oss.str());       \
         }                                                                                       \
-        name() : generic_error(#name) { }                                                 \
+        name() : generic_error(#name) { }                                                       \
         ~name() override = default;                                                             \
     };                                                                                          \
 }
@@ -46,7 +46,7 @@ namespace lzw::error                                                            
 #define make_simple_error_class_traceable(name)                                                         \
 namespace lzw::error                                                                                    \
 {                                                                                                       \
-    class name final : public generic_error {                                                     \
+    class name final : public generic_error {                                                           \
     private:                                                                                            \
         template < typename Type >                                                                      \
         void msg_conj(const Type & msg) { oss << msg; }                                                 \
@@ -59,7 +59,7 @@ namespace lzw::error                                                            
         {                                                                                               \
             msg_conj(#name ": ");                                                                       \
             (msg_conj(args), ...);                                                                      \
-            lzw::utils::replace_all(message, "<INSERT ERROR MESSAGE HERE>", oss.str());                 \
+            ::lzw::utils::replace_all(message, "<INSERT ERROR MESSAGE HERE>", oss.str());               \
         }                                                                                               \
         name() : generic_error(#name, true) { }                                                         \
         ~name() override = default;                                                                     \

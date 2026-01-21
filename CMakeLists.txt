@@ -13,38 +13,32 @@ add_library(liblzw STATIC
         src/misc/logger.cpp                     src/include/logger.h
         src/misc/args.cpp                       src/include/args.h
         src/lzw/mmap.cpp                        src/include/mmap.h
+        src/include/any_length_numeric.h
+        src/include/lzw.h                       src/include/lzw.inl
 )
 target_link_libraries(liblzw PUBLIC atomic)
 
 add_executable(lzw src/main.cpp)
 target_link_libraries(lzw PUBLIC liblzw)
 
-set(UNIT_TESTS "")
-
 # add_unit_test EXECUTABLE_NAME [FILES...]
 function(add_unit_test EXECUTABLE_NAME)
-    if("${BUILD_WITH_TESTS}" STREQUAL "True")
-        add_executable(${EXECUTABLE_NAME} ${ARGN})
-        target_link_libraries(${EXECUTABLE_NAME} PRIVATE cfs_obj)
-        if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-            if ("${SANITIZER}" STREQUAL "address")
-                target_compile_options(${EXECUTABLE_NAME} PRIVATE -fsanitize=address -fsanitize=undefined)
-                target_link_libraries(${EXECUTABLE_NAME} PRIVATE asan ubsan atomic)
-            elseif("${SANITIZER}" STREQUAL "thread")
-                target_compile_options(${EXECUTABLE_NAME} PRIVATE -fsanitize=thread -fno-sanitize-recover=undefined -fno-sanitize=undefined)
-                target_link_libraries(${EXECUTABLE_NAME} PRIVATE tsan atomic)
-            endif()
+    add_executable(${EXECUTABLE_NAME} ${ARGN})
+    target_link_libraries(${EXECUTABLE_NAME} PRIVATE liblzw)
+    if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+        if ("${SANITIZER}" STREQUAL "address")
+            target_compile_options(${EXECUTABLE_NAME} PRIVATE -fsanitize=address -fsanitize=undefined)
+            target_link_libraries(${EXECUTABLE_NAME} PRIVATE asan ubsan atomic)
+        elseif("${SANITIZER}" STREQUAL "thread")
+            target_compile_options(${EXECUTABLE_NAME} PRIVATE -fsanitize=thread -fno-sanitize-recover=undefined -fno-sanitize=undefined)
+            target_link_libraries(${EXECUTABLE_NAME} PRIVATE tsan atomic)
+        else ()
+            target_compile_options(${EXECUTABLE_NAME} PUBLIC -g -O0 -fprofile-arcs -ftest-coverage)
+            target_link_options(${EXECUTABLE_NAME} PUBLIC -g -O0 -fprofile-arcs -ftest-coverage)
         endif()
+    endif()
 
-        add_custom_target(SYMBOL_LINK_FOR_TEST_${EXECUTABLE_NAME} ALL
-                COMMAND ${CMAKE_COMMAND} -E create_symlink ${CMAKE_CURRENT_BINARY_DIR}/${EXECUTABLE_NAME} ${CMAKE_BINARY_DIR}/${EXECUTABLE_NAME}.test
-                COMMENT "Creating symbol link ${CMAKE_BINARY_DIR}/${EXECUTABLE_NAME}.test => ${CMAKE_CURRENT_BINARY_DIR}/${EXECUTABLE_NAME}"
-                DEPENDS ${EXECUTABLE_NAME}
-                BYPRODUCTS ${CMAKE_BINARY_DIR}/${EXECUTABLE_NAME}.test)
-
-        list(APPEND UNIT_TESTS "SYMBOL_LINK_FOR_TEST_${EXECUTABLE_NAME}")
-        set(UNIT_TESTS "${UNIT_TESTS}" PARENT_SCOPE)
-    endif ()
+    add_test(COMMAND ${CMAKE_CURRENT_BINARY_DIR}/${EXECUTABLE_NAME})
 endfunction()
 
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
@@ -102,3 +96,5 @@ else ()
     target_compile_options(liblzw PUBLIC ${compile_args})
     target_link_options(liblzw PUBLIC ${link_args})
 endif ()
+
+add_unit_test(numeric src/tests/numeric.cpp)
