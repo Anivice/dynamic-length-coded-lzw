@@ -360,8 +360,10 @@ namespace lzw
             }
         };
 
+    public:
         lzw_dictionary_t < uint64_t, symbol_rep_t > symbol_map;
 
+    private:
         void sort()
         {
             std::ranges::sort(huffman_list, [](const std::unique_ptr < HuffmanNode > & a, const std::unique_ptr < HuffmanNode > & b)->bool {
@@ -456,73 +458,35 @@ namespace lzw
 
         void decode_using_constructed_pairs(const std::vector<uint8_t> & input_stream, const uint64_t bits)
         {
-            struct pop_bit_frame_t {
-                uint64_t r_pos = 0;
-            };
-
-            auto pop_bit = [](const std::vector<uint8_t> & bit_list, pop_bit_frame_t & frame)->bool
-            {
-                if (frame.r_pos >= bit_list.size() * 8) {
-                    throw std::out_of_range("pop_bit_frame_t::r_pos >= bit_list.size() * 8");
-                }
-
-                const uint64_t byte_pos = frame.r_pos / 8;
-                const uint64_t bit_pos = frame.r_pos % 8;
-                const uint8_t byte = bit_list[byte_pos];
-                ++frame.r_pos;
-                const auto pop_result = (byte >> bit_pos) & 0x01;
-                return pop_result;
-            };
-
-            auto pop_bit_val = [&pop_bit](const std::vector<uint8_t> & bit_list, pop_bit_frame_t & frame, const uint64_t len)->uint64_t
-            {
-                uint64_t val = 0;
-                for (uint64_t i = 0; i < len; ++i)
-                {
-                    const auto bit = pop_bit(bit_list, frame);
-                    val |= bit;
-                    val <<= 1;
-                }
-
-                val >>= 1;
-                return val;
-            };
-
             uint64_t offset = 0;
             uint64_t current_bit_size = 1;
-            pop_bit_frame_t pop_frame = { };
+            lzw_dictionary_t < uint64_t, uint8_t > flipped_pairs; // TODO: std::map is not the best option performance-wise
 
-            struct rep_pure_t {
-                uint64_t data;
-                uint64_t bits;
-
-                bool operator < (const rep_pure_t & other) const { return data < other.data; }
-                bool operator == (const rep_pure_t & other) const { return (data == other.data) && (bits == other.bits); }
-                bool operator != (const rep_pure_t & other) const { return !this->operator==(other); }
+            auto numeric_to_uint64_t = [](const uint64_t & result, const uint64_t & data_bits)->uint64_t
+            {
+                const uint64_t bits_ = data_bits << 58; // lower 58 bits are available for symbols
+                // higher 6 bits can describe how much lower bits are used, which should be more than enough
+                return result | bits_;
             };
 
-            std::map < rep_pure_t, uint8_t, std::less<> > flipped_pairs; // TODO: std::map is not the best option performance-wise
-            auto vec_to_uint64_t = [](const std::vector<uint8_t> & vec) {
+            auto vec_to_uint64_t = [&numeric_to_uint64_t](const symbol_rep_t & vec)
+            {
                 uint64_t result = 0;
-                std::memcpy(&result, vec.data(), vec.size());
-                return result;
+                std::memcpy(&result, vec.data_buffer.data(), vec.data_buffer.size());
+                return numeric_to_uint64_t(result, vec.data_bits);
             };
 
             for (const auto & [byte, bitStream] : symbol_map) {
-                flipped_pairs.emplace(rep_pure_t{
-                    .data = vec_to_uint64_t(bitStream.data_buffer),
-                    .bits = bitStream.data_bits,
-                }, byte);
+                flipped_pairs.emplace(vec_to_uint64_t(bitStream), byte);
             }
 
+            BitReaderLSB reader(input_stream);
             auto can_find_reference = [&](const uint64_t bit_offset, const uint64_t bit_size, uint8_t & decoded)->bool
             {
-                pop_frame.r_pos = bit_offset;
-                const auto current_reference = pop_bit_val(input_stream, pop_frame, bit_size);
-                const auto reference = flipped_pairs.find(rep_pure_t{
-                    .data = current_reference,
-                    .bits = bit_size
-                });
+                reader.bitpos = bit_offset;
+                const auto current_reference = reader.read(bit_size);
+                const auto key = numeric_to_uint64_t(current_reference, bit_size);
+                const auto reference = flipped_pairs.find(key);
 
                 if (reference == flipped_pairs.end()) {
                     return false;
@@ -548,41 +512,24 @@ namespace lzw
     public:
         Huffman (const std::vector<uint8_t> & input, std::vector <uint8_t> & output) : input_(input), output_(output) { }
 
+        std::vector < uint64_t > export_symbols()
+        {
+            std::vector < uint64_t > ret;
+            std::vector < std::pair <uint64_t, symbol_rep_t > > map;
+            map.insert_range(map.end(), symbol_map);
+            std::ranges::sort(map, [](const auto & a, const auto & b)->bool{ return a.first < b.first; });
+            std::ranges::for_each(map | std::views::values, [&](const symbol_rep_t & p) {
+                uint64_t val = 0;
+                std::memcpy(&val, p.data_buffer.data(), p.data_buffer.size());
+                val |= p.data_bits << 58;
+                ret.push_back(val);
+            });
+
+            return ret;
+        }
+
         void compress()
         {
-            struct push_bit_frame_t {
-                uint64_t last_write_pos_in_last_byte = 0;
-            };
-
-            auto push_bit = [](std::vector < uint8_t > & bit_list, const bool bit, push_bit_frame_t & frame)
-            {
-                if (bit_list.empty()) {
-                    bit_list.push_back(bit);
-                    frame.last_write_pos_in_last_byte = 0;
-                    return;
-                }
-
-                if (frame.last_write_pos_in_last_byte < 7) {
-                    bit_list.back() <<= 1;
-                    bit_list.back() |= bit;
-                    ++frame.last_write_pos_in_last_byte;
-                } else {
-                    bit_list.back() = reverse_bits(bit_list.back());
-                    bit_list.push_back(bit);
-                    frame.last_write_pos_in_last_byte = 0;
-                }
-            };
-
-            auto finish_push = [](std::vector < uint8_t > & bit_list, push_bit_frame_t & frame)
-            {
-                if (frame.last_write_pos_in_last_byte < 7) {
-                    bit_list.back() <<= (7 - frame.last_write_pos_in_last_byte);
-                    bit_list.back() = reverse_bits(bit_list.back());
-                } else {
-                    bit_list.back() = reverse_bits(bit_list.back());
-                }
-            };
-
             // construct Huffman table
             load_input_into_huffman_list();
             make_huffman_tree_from_huffman_list();
@@ -611,8 +558,18 @@ namespace lzw
             } sym_pos_bitmap(symbol_bitmap);
 
             if (symbol_map.size() > 256) throw std::runtime_error("WTF");
+            // 1. record size
             huffman_table.push_back(symbol_map.size() == 256 ? 0 : static_cast<uint8_t>(symbol_map.size()));
-            for (const auto & [sym, rep] : symbol_map)
+
+            // 2. sort unordered_map
+            std::vector < std::pair < uint64_t, symbol_rep_t > > map;
+            map.insert_range(map.end(), symbol_map);
+            std::ranges::sort(map, [](const std::pair < uint64_t, symbol_rep_t > & a, const std::pair < uint64_t, symbol_rep_t > & b)->bool {
+                return a.first < b.first;
+            });
+
+            // 3. record bitmap and push the bit size
+            for (const auto & [sym, rep] : map)
             {
                 if (rep.data_bits > 255 || sym > 255) throw std::runtime_error("WTF");
                 sym_pos_bitmap.set_bit(sym, true);
@@ -620,17 +577,18 @@ namespace lzw
             }
             huffman_table.insert_range(huffman_table.begin() + 1, symbol_bitmap); // add bitmap after symbol size
 
+            // 4. write packed bits
             std::vector<uint8_t> huffman_table_val_section; // [[PACKED BITS]...]
             BitWriterLSB table_val_sec_writer(huffman_table_val_section);
-            for (const auto &[data_buffer, data_bits] : symbol_map | std::views::values)
+            for (const auto &[data_buffer, data_bits] : map | std::views::values)
             {
                 uint64_t data = 0;
                 std::memcpy(&data, data_buffer.data(), data_buffer.size());
                 table_val_sec_writer.write(data, data_bits);
             }
-
             huffman_table.insert(huffman_table.end(), huffman_table_val_section.begin(), huffman_table_val_section.end());
 
+            // now, compress the whole table
             std::vector<uint8_t> compressed_huffman_table;
             lzw<12> LZW(huffman_table, compressed_huffman_table);
             LZW.compress();
@@ -643,14 +601,10 @@ namespace lzw
                 });
             output_.insert_range(output_.end(), compressed_huffman_table);
 
+            /// ready to encode actual data
             std::vector<uint8_t> encoded_huffman_stream;
             uint64_t bits_written = 0;
-            push_bit_frame_t push_frame;
-            auto push_data = [&](const int64_t data_len, const uint64_t data) {
-                for (int64_t i = data_len - 1; i >= 0; --i) {
-                    push_bit(encoded_huffman_stream, (data >> i) & 0x01, push_frame);
-                }
-            };
+            BitWriterLSB writer(encoded_huffman_stream);
 
             // encode
             for (const auto & c : input_)
@@ -658,7 +612,7 @@ namespace lzw
                 uint64_t data = 0;
                 const auto & [data_buffer, data_bits] = symbol_map.at(c);
                 std::memcpy(&data, data_buffer.data(), data_buffer.size());
-                push_data(static_cast<int64_t>(data_bits), data);
+                writer.write(data, static_cast<int64_t>(data_bits));
                 bits_written += data_bits;
             }
 
@@ -669,12 +623,13 @@ namespace lzw
 
         void decompress()
         {
-            uint16_t table_size = 0;
+            uint16_t table_size = 0; // LZW pack size
             std::memcpy(&table_size, input_.data(), sizeof(table_size));
             std::vector<uint8_t> huffman_table_lzw_compressed { input_.begin() + 2, input_.begin() + 2 + table_size }, huffman_table;
             lzw<12> Decompressor(huffman_table_lzw_compressed, huffman_table);
             Decompressor.decompress();
 
+            /// Read symbol table
             const int64_t symbol_count = huffman_table.front() == 0 ? 256 : huffman_table.front();
             std::vector<uint8_t> symbol_bitmap { huffman_table.begin() + 1, huffman_table.begin() + 1 + 32 };
             const class sym_pos_bitmap_t : public bitmap_base

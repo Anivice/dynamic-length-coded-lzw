@@ -163,9 +163,7 @@ int main(int argc, char** argv)
                 {
                     std::vector<uint8_t> input(frame->begin, frame->end);
                     lzw::lzw<bit_size> Compressor(input, frame->output);
-                    try {
-                        Compressor.decompress();
-                    } catch (...) { }
+                    Compressor.decompress();
                 }, frame_.get()), std::move(frame_));
 
                 active_threads++;
