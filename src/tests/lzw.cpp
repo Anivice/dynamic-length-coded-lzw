@@ -11,7 +11,7 @@ int main(int argc, char** argv)
     fstat(fd, &st);
 
     data.resize(st.st_size);
-    read(fd, data.data(), st.st_size);
+    (void)read(fd, data.data(), st.st_size);
 
     lzw::Huffman huffman(data, out);
     huffman.compress();

@@ -103,7 +103,7 @@ int main(int argc, char** argv)
                 {
                     std::vector<uint8_t> input(input_mmap.data() + block_size * frame->index,
                         input_mmap.data() + std::min(static_cast<uint64_t>(input_mmap.size()), block_size * (frame->index + 1)));
-                    lzw::lzw<bit_size> Compressor(input, frame->output);
+                    lzw::Huffman /* lzw::lzw<bit_size> */ Compressor(input, frame->output);
                     Compressor.compress();
                     if (frame->output.size() > 0xFFFF) {
                         throw std::runtime_error("Compression failed for this data set");
@@ -162,7 +162,7 @@ int main(int argc, char** argv)
                 thread_pool.emplace_back(std::thread([](pool_frame_t * frame)
                 {
                     std::vector<uint8_t> input(frame->begin, frame->end);
-                    lzw::lzw<bit_size> Compressor(input, frame->output);
+                    lzw::Huffman /* lzw::lzw<bit_size> */  Compressor(input, frame->output);
                     Compressor.decompress();
                 }, frame_.get()), std::move(frame_));
 

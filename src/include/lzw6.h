@@ -10,12 +10,12 @@
 #include <vector>
 #include <functional>
 #include <ranges>
+#include <list>
 #ifdef USE_TSL_HOPSCOTCH_MAP
 # include "tsl/hopscotch_map.h"
 # define lzw_dictionary_t tsl::hopscotch_map
 #else
 # include <unordered_map>
-# include <map>
 # define lzw_dictionary_t std::unordered_map
 #endif
 
@@ -342,7 +342,7 @@ namespace lzw
             [[nodiscard]] bool operator ==(const HuffmanNode & Node) const { return frequency_ == Node.frequency_; }
         };
 
-        std::vector < std::unique_ptr < HuffmanNode > > huffman_list;
+        std::list < HuffmanNode > huffman_list;
         const std::vector <uint8_t> & input_;
         std::vector <uint8_t> & output_;
         HuffmanNode * root = nullptr;
@@ -366,22 +366,24 @@ namespace lzw
     private:
         void sort()
         {
-            std::ranges::sort(huffman_list, [](const std::unique_ptr < HuffmanNode > & a, const std::unique_ptr < HuffmanNode > & b)->bool {
-                if (a->connected_to_the_tree || b->connected_to_the_tree) return a->connected_to_the_tree < b->connected_to_the_tree;
-                return (*a) <= (*b);
+            huffman_list.sort([&](const HuffmanNode & a, const HuffmanNode & b)->bool
+            {
+                if (a.connected_to_the_tree || b.connected_to_the_tree) {
+                    return a.connected_to_the_tree < b.connected_to_the_tree;
+                }
+                return a <= b;
             });
         }
 
         void load_input_into_huffman_list()
         {
-            huffman_list.reserve(256);
             lzw_dictionary_t < uint8_t, uint64_t > frequency_map;
             for (const auto c : input_) {
                 frequency_map[c]++;
             }
 
             for (const auto [sym, freq] : frequency_map) {
-                huffman_list.emplace_back(std::make_unique<HuffmanNode>(sym, freq));
+                huffman_list.emplace_back(sym, freq);
             }
 
             sort();
@@ -392,7 +394,7 @@ namespace lzw
             uint64_t next_code = MaxCodexLimit;
             auto assign = [this, &next_code](decltype(huffman_list)::iterator & it, const decltype(huffman_list)::iterator * cannot = nullptr)->bool
             {
-                while ((*it)->connected_to_the_tree || (cannot && (it == *cannot)) || ((*it)->symbol_ == next_code))
+                while ((it)->connected_to_the_tree || (cannot && (it == *cannot)) || ((it)->symbol_ == next_code))
                 {
                     ++it;
                     if (it == huffman_list.end())
@@ -407,15 +409,15 @@ namespace lzw
             decltype(huffman_list)::iterator left;
             while (true)
             {
-                const auto it = huffman_list.begin();
+                auto it = huffman_list.begin();
                 left = it;
-                auto right = it + 1;
+                auto right = ++it;
                 if (!assign(left)) break;
                 if (!assign(right, &left)) break;
-                auto * left_ptr = left->get();
-                auto * right_ptr = right->get();
-                huffman_list.emplace_back(std::make_unique<HuffmanNode>(next_code++, (*left)->frequency_ + (*right)->frequency_));
-                auto & newNode = *huffman_list.back();
+                auto * left_ptr = &*left;
+                auto * right_ptr = &*right;
+                huffman_list.emplace_back(next_code++, (left)->frequency_ + (right)->frequency_);
+                auto & newNode = huffman_list.back();
 
                 newNode.left_ = left_ptr;
                 newNode.right_ = right_ptr;
@@ -424,8 +426,8 @@ namespace lzw
                 sort();
             }
 
-            if ((*left)->connected_to_the_tree) throw std::runtime_error("Internal BUG");
-            root = left->get();
+            if ((left)->connected_to_the_tree) throw std::runtime_error("Internal BUG");
+            root = &*left;
         }
 
         void walk_huffman_tree(const HuffmanNode * parent, const std::vector<uint8_t> & code_, const uint64_t bpos)
@@ -460,7 +462,7 @@ namespace lzw
         {
             uint64_t offset = 0;
             uint64_t current_bit_size = 1;
-            lzw_dictionary_t < uint64_t, uint8_t > flipped_pairs; // TODO: std::map is not the best option performance-wise
+            lzw_dictionary_t < uint64_t, uint8_t > flipped_pairs;
 
             auto numeric_to_uint64_t = [](const uint64_t & result, const uint64_t & data_bits)->uint64_t
             {
