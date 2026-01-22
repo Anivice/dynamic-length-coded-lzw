@@ -3,8 +3,11 @@
 
 #include <cstdint>
 #include <cstring>
+#include <algorithm>
+#include <memory>
 #include <stdexcept>
 #include <vector>
+#include <functional>
 #ifdef USE_TSL_HOPSCOTCH_MAP
 # include "tsl/hopscotch_map.h"
 # define lzw_dictionary_t tsl::hopscotch_map
@@ -222,6 +225,142 @@ namespace lzw
                 output_.insert(output_.end(), entry.begin(), entry.end());
                 prev = static_cast<int64_t>(code);
             }
+        }
+    };
+
+    class Huffman
+    {
+        static constexpr uint64_t MaxCodexLimit = 256;
+
+        struct HuffmanNode
+        {
+            uint64_t symbol_;
+            uint64_t frequency_;
+            explicit HuffmanNode(const uint64_t symbol, const uint64_t frequency)
+                : symbol_(symbol), frequency_(frequency) { }
+
+            HuffmanNode * left_ = nullptr;
+            HuffmanNode * right_ = nullptr;
+            bool connected_to_the_tree = false;
+
+            [[nodiscard]] bool operator >(const HuffmanNode & Node) const { return frequency_ > Node.frequency_; }
+            [[nodiscard]] bool operator <(const HuffmanNode & Node) const { return frequency_ < Node.frequency_; }
+            [[nodiscard]] bool operator >=(const HuffmanNode & Node) const { return frequency_ >= Node.frequency_; }
+            [[nodiscard]] bool operator <=(const HuffmanNode & Node) const { return frequency_ <= Node.frequency_; }
+            [[nodiscard]] bool operator ==(const HuffmanNode & Node) const { return frequency_ == Node.frequency_; }
+        };
+
+        std::vector < std::unique_ptr < HuffmanNode > > huffman_list;
+        const std::vector <uint8_t> & input_;
+        std::vector <uint8_t> & output_;
+        HuffmanNode * root = nullptr;
+        struct symbol_rep_t {
+            std::vector<uint8_t> data_buffer;
+            uint64_t data_bits;
+        };
+
+        lzw_dictionary_t < uint64_t, symbol_rep_t > symbol_map;
+
+        void sort()
+        {
+            std::ranges::sort(huffman_list, [](const std::unique_ptr < HuffmanNode > & a, const std::unique_ptr < HuffmanNode > & b)->bool {
+                if (a->connected_to_the_tree || b->connected_to_the_tree) return a->connected_to_the_tree < b->connected_to_the_tree;
+                return (*a) <= (*b);
+            });
+        }
+
+        void load_input_into_huffman_list()
+        {
+            huffman_list.reserve(256);
+            lzw_dictionary_t < uint8_t, uint64_t > frequency_map;
+            for (const auto c : input_) {
+                frequency_map[c]++;
+            }
+
+            for (const auto [sym, freq] : frequency_map) {
+                huffman_list.emplace_back(std::make_unique<HuffmanNode>(sym, freq));
+            }
+
+            sort();
+        }
+
+        void make_huffman_tree_from_huffman_list()
+        {
+            uint64_t next_code = MaxCodexLimit;
+            auto assign = [this, &next_code](decltype(huffman_list)::iterator & it, const decltype(huffman_list)::iterator * cannot = nullptr)->bool
+            {
+                while ((*it)->connected_to_the_tree || (cannot && (it == *cannot)) || ((*it)->symbol_ == next_code))
+                {
+                    ++it;
+                    if (it == huffman_list.end())
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            };
+
+            decltype(huffman_list)::iterator left;
+            while (true)
+            {
+                const auto it = huffman_list.begin();
+                left = it;
+                auto right = it + 1;
+                if (!assign(left)) break;
+                if (!assign(right, &left)) break;
+                auto * left_ptr = left->get();
+                auto * right_ptr = right->get();
+                huffman_list.emplace_back(std::make_unique<HuffmanNode>(next_code++, (*left)->frequency_ + (*right)->frequency_));
+                auto & newNode = *huffman_list.back();
+
+                newNode.left_ = left_ptr;
+                newNode.right_ = right_ptr;
+                left_ptr->connected_to_the_tree = true;
+                right_ptr->connected_to_the_tree = true;
+                sort();
+            }
+
+            if ((*left)->connected_to_the_tree) throw std::runtime_error("Internal BUG");
+            root = left->get();
+        }
+
+        void walk_huffman_tree(const HuffmanNode * parent, const std::vector<uint8_t> & code_, const uint64_t bpos)
+        {
+            auto walk_child = [&](
+                const HuffmanNode * child,
+                const uint64_t p_symbol,
+                const std::vector<uint8_t> & p_code,
+                const uint64_t p_bpos,
+                const bool bit)
+            {
+                if (child) {
+                    std::vector<uint8_t> code = p_code;
+                    BitWriterLSB writer(code);
+                    writer.bitpos = p_bpos;
+                    writer.write(bit, 1);
+                    walk_huffman_tree(child, code, writer.bitpos);
+                } else {
+                    // already the end, push symbol
+                    symbol_map[p_symbol] = {
+                        .data_buffer = p_code,
+                        .data_bits = p_bpos
+                    };
+                }
+            };
+
+            walk_child(parent->left_, parent->symbol_, code_, bpos, false);
+            walk_child(parent->right_, parent->symbol_, code_, bpos, true);
+        }
+
+    public:
+
+        Huffman (const std::vector<uint8_t> & input, std::vector <uint8_t> & output)
+            : input_(input), output_(output)
+        {
+            load_input_into_huffman_list();
+            make_huffman_tree_from_huffman_list();
+            walk_huffman_tree(root, {}, 0);
         }
     };
 }
