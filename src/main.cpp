@@ -2,7 +2,6 @@
 #include <memory>
 #include <sstream>
 #include "error.h"
-#include "utils.h"
 #include "args.h"
 #include "lzw6.h"
 #include "mmap.h"
@@ -74,7 +73,7 @@ int main(int argc, char** argv)
 
         if (compress)
         {
-            const auto blocks = lzw::utils::arithmetic::count_cell_with_cell_size(block_size, input_mmap.size());
+            const auto blocks = input_mmap.size() / block_size + (input_mmap.size() % block_size != 0);
             struct pool_frame_t {
                 std::vector<uint8_t> output;
                 section_head_16bit_t section_head { };

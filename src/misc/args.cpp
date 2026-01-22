@@ -1,7 +1,26 @@
 #include "args.h"
 #include <sstream>
 
-#include "utils.h"
+static std::string replace_all(
+    std::string & original,
+    const std::string & target,
+    const std::string & replacement) noexcept
+{
+    if (target.empty()) return original; // Avoid infinite loop if target is empty
+
+    if (target.size() == 1 && replacement.empty()) {
+        std::erase_if(original, [&target](const char c) { return c == target[0]; });
+        return original;
+    }
+
+    size_t pos = 0;
+    while ((pos = original.find(target, pos)) != std::string::npos) {
+        original.replace(pos, target.length(), replacement);
+        pos += replacement.length(); // Move past the replacement to avoid infinite loop
+    }
+
+    return original;
+}
 
 std::string lzw::utils::PreDefinedArgumentType::print_help() const
 {

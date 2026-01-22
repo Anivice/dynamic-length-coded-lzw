@@ -6,11 +6,8 @@ include_directories(src/include)
 add_compile_definitions(VERSION="0.0.1")
 
 add_library(liblzw STATIC
-        src/misc/utils.cpp                      src/include/utils.h
         src/misc/args.cpp                       src/include/args.h
         src/lzw/mmap.cpp                        src/include/mmap.h
-        src/include/lzw.inl                     src/include/lzw.h
-        src/include/numeric.inl                 src/include/numeric.h
         src/include/lzw6.h
 )
 target_link_libraries(liblzw PUBLIC atomic)
@@ -29,7 +26,7 @@ function(add_unit_test EXECUTABLE_NAME)
         elseif("${SANITIZER}" STREQUAL "thread")
             target_compile_options(${EXECUTABLE_NAME} PRIVATE -fsanitize=thread -fno-sanitize-recover=undefined -fno-sanitize=undefined)
             target_link_libraries(${EXECUTABLE_NAME} PRIVATE tsan atomic)
-        else ()
+        elseif ("${COVERAGE}" STREQUAL "True")
             target_compile_options(${EXECUTABLE_NAME} PUBLIC -g -O0 -fprofile-arcs -ftest-coverage)
             target_link_options(${EXECUTABLE_NAME} PUBLIC -g -O0 -fprofile-arcs -ftest-coverage)
         endif()

@@ -3,7 +3,6 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include "utils.h"
 #include <iostream>
 
 namespace lzw::basic_io
