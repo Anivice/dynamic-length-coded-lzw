@@ -5,9 +5,16 @@
 #include <cstring>
 #include <stdexcept>
 #include <vector>
-#include "tsl/hopscotch_map.h"
+#ifdef USE_TSL_HOPSCOTCH_MAP
+# include "tsl/hopscotch_map.h"
+# define lzw_dictionary_t tsl::hopscotch_map
+#else
+# include <unordered_map>
+# define lzw_dictionary_t std::unordered_map
+#endif
 
-namespace lzw {
+namespace lzw
+{
     /// Bit IO steam
     struct BitWriterLSB
     {
@@ -80,7 +87,7 @@ namespace lzw {
         {
             output_.clear();
             BitWriterLSB BitStream(output_);
-            tsl::hopscotch_map < std::string, uint64_t > dictionary;
+            lzw_dictionary_t < std::string, uint64_t > dictionary;
             dictionary.reserve(MaxDictionarySize);
             auto init_dict = [&dictionary]
             {
@@ -148,7 +155,7 @@ namespace lzw {
             uint64_t code_width = MinimumCodeSize + 1;
             uint64_t next_code = FirstFreeCode;
             int64_t prev = -1;  // Using -1 as sentinel for "no previous"
-            tsl::hopscotch_map < uint64_t, std::string > dictionary;
+            lzw_dictionary_t < uint64_t, std::string > dictionary;
 
             dictionary.reserve(MaxDictionarySize);
             auto init_dict = [&dictionary]
@@ -219,4 +226,5 @@ namespace lzw {
     };
 }
 
+#undef lzw_dictionary_t
 #endif //LZW_LZW6_H
