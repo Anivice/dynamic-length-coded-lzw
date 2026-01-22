@@ -11,6 +11,7 @@ add_library(liblzw STATIC
         src/lzw/mmap.cpp                        src/include/mmap.h
         src/include/lzw.inl                     src/include/lzw.h
         src/include/numeric.inl                 src/include/numeric.h
+        src/include/lzw6.h
 )
 target_link_libraries(liblzw PUBLIC atomic)
 
@@ -94,3 +95,4 @@ else ()
 endif ()
 
 add_unit_test(numeric src/tests/numeric.cpp)
+add_unit_test(lzw_test src/tests/lzw.cpp src/include/lzw6.h)

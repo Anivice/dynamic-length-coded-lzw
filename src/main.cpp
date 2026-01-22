@@ -4,7 +4,7 @@
 #include "error.h"
 #include "utils.h"
 #include "args.h"
-#include "lzw.h"
+#include "lzw6.h"
 #include "mmap.h"
 #include <fstream>
 #include <thread>
@@ -61,9 +61,9 @@ int main(int argc, char** argv)
         }
 
         constexpr uint64_t bit_size = 12;
-        constexpr uint64_t block_size = lzw::two_power(bit_size) - 1;
+        constexpr uint64_t block_size = lzw::const_two_power(bit_size) - 1;
         bool compress = !parsed.contains("decompress");
-        int workers = std::thread::hardware_concurrency();
+        unsigned int workers = std::thread::hardware_concurrency();
         if (parsed.contains("threads")) {
             try {
                 workers = std::strtoul(parsed.at("threads").c_str(), nullptr, 10);
@@ -164,7 +164,9 @@ int main(int argc, char** argv)
                 {
                     std::vector<uint8_t> input(frame->begin, frame->end);
                     lzw::lzw<bit_size> Compressor(input, frame->output);
-                    Compressor.decompress();
+                    try {
+                        Compressor.decompress();
+                    } catch (...) { }
                 }, frame_.get()), std::move(frame_));
 
                 active_threads++;
