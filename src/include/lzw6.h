@@ -3,16 +3,19 @@
 
 #include <cstdint>
 #include <cstring>
+#include <cmath>
 #include <algorithm>
 #include <memory>
 #include <stdexcept>
 #include <vector>
 #include <functional>
+#include <ranges>
 #ifdef USE_TSL_HOPSCOTCH_MAP
 # include "tsl/hopscotch_map.h"
 # define lzw_dictionary_t tsl::hopscotch_map
 #else
 # include <unordered_map>
+# include <map>
 # define lzw_dictionary_t std::unordered_map
 #endif
 
@@ -228,9 +231,98 @@ namespace lzw
         }
     };
 
+    constexpr uint8_t reverse_bits(const uint8_t x)
+    {
+        constexpr uint8_t lookup[16] = {0x0, 0x8, 0x4, 0xc, 0x2, 0xa, 0x6, 0xe, 0x1, 0x9, 0x5, 0xd, 0x3, 0xb, 0x7, 0xf};
+        return (lookup[x & 0x0F] << 4) | lookup[x >> 4];
+    }
+
+    constexpr uint16_t reverse_bits(const uint16_t x)
+    {
+        return static_cast<uint16_t>(reverse_bits(static_cast<uint8_t>(x))) << 8 | static_cast<uint16_t>(reverse_bits(static_cast<uint8_t>(x >> 8)));
+    }
+
+    constexpr uint32_t reverse_bits(const uint32_t x)
+    {
+        return static_cast<uint32_t>(reverse_bits(static_cast<uint16_t>(x))) << 16 | static_cast<uint32_t>(reverse_bits(static_cast<uint16_t>(x >> 16)));
+    }
+
+    constexpr uint64_t reverse_bits(const uint64_t x)
+    {
+        return static_cast<uint64_t>(reverse_bits(static_cast<uint32_t>(x))) << 32 | static_cast<uint64_t>(reverse_bits(static_cast<uint32_t>(x >> 32)));
+    }
+
     class Huffman
     {
         static constexpr uint64_t MaxCodexLimit = 256;
+
+        /// bitmap base class
+        class bitmap_base
+        {
+        protected:
+            uint8_t * data_array_ = nullptr;
+            uint64_t particles_ = 0;
+            uint64_t bytes_required_ = 0;
+
+            /// Initialize `data_array_`
+            /// @param bytes Bytes required
+            /// @return If success, return true, else, false. bitmap_base() will throw an error if false.
+            std::function<bool(uint64_t)> init_data_array = [](const uint64_t) -> bool { return false; };
+
+            /// Create a bitmap
+            /// @param required_particles Particles
+            /// @throws std::runtime_error Init failed
+            void init(const uint64_t required_particles)
+            {
+                bytes_required_ = required_particles / 8 + (required_particles % 8 != 0);
+                particles_ = required_particles;
+                if (!init_data_array(bytes_required_)) throw std::runtime_error("Cannot init data set");
+            }
+
+        public:
+            bitmap_base() noexcept = default;
+            virtual ~bitmap_base() noexcept = default;
+
+            /// Get bit at the specific location
+            /// @param index Bit Index
+            /// @return The bit at the specific location
+            /// @throws std::out_of_range Out of bounds
+            [[nodiscard]] bool get_bit(const uint64_t index) const
+            {
+                if (index >= particles_) throw std::out_of_range("Index out of range");
+                const uint64_t q = index >> 3;
+                const uint64_t r = index & 7; // div by 8
+                uint8_t c = 0;
+                c = data_array_[q];
+
+                c >>= r;
+                c &= 0x01;
+                return c;
+            }
+
+            /// Set the bit at the specific location
+            /// @param index Bit Index
+            /// @param new_bit The new bit value
+            /// @return NONE
+            /// @throws std::out_of_range Out of bounds
+            void set_bit(const uint64_t index, const bool new_bit)
+            {
+                if (index >= particles_) throw std::out_of_range("Index out of range");
+                const uint64_t q = index >> 3;
+                const uint64_t r = index & 7; // div by 8
+                uint8_t c = 0x01;
+                c <<= r;
+
+                if (new_bit) // set to true
+                {
+                    data_array_[q] |= c;
+                }
+                else // clear bit
+                {
+                    data_array_[q] &= ~c;
+                }
+            }
+        };
 
         struct HuffmanNode
         {
@@ -254,9 +346,18 @@ namespace lzw
         const std::vector <uint8_t> & input_;
         std::vector <uint8_t> & output_;
         HuffmanNode * root = nullptr;
-        struct symbol_rep_t {
-            std::vector<uint8_t> data_buffer;
-            uint64_t data_bits;
+        struct symbol_rep_t
+        {
+            std::vector<uint8_t> data_buffer{};
+            uint64_t data_bits = 0;
+
+            bool operator==(const symbol_rep_t & rep) const {
+                return (rep.data_bits == data_bits) && (data_buffer == rep.data_buffer);
+            }
+
+            bool operator!=(const symbol_rep_t & rep) const {
+                return !((rep.data_bits == data_bits) && (data_buffer == rep.data_buffer));
+            }
         };
 
         lzw_dictionary_t < uint64_t, symbol_rep_t > symbol_map;
@@ -353,14 +454,280 @@ namespace lzw
             walk_child(parent->right_, parent->symbol_, code_, bpos, true);
         }
 
-    public:
-
-        Huffman (const std::vector<uint8_t> & input, std::vector <uint8_t> & output)
-            : input_(input), output_(output)
+        void decode_using_constructed_pairs(const std::vector<uint8_t> & input_stream, const uint64_t bits)
         {
+            struct pop_bit_frame_t {
+                uint64_t r_pos = 0;
+            };
+
+            auto pop_bit = [](const std::vector<uint8_t> & bit_list, pop_bit_frame_t & frame)->bool
+            {
+                if (frame.r_pos >= bit_list.size() * 8) {
+                    throw std::out_of_range("pop_bit_frame_t::r_pos >= bit_list.size() * 8");
+                }
+
+                const uint64_t byte_pos = frame.r_pos / 8;
+                const uint64_t bit_pos = frame.r_pos % 8;
+                const uint8_t byte = bit_list[byte_pos];
+                ++frame.r_pos;
+                const auto pop_result = (byte >> bit_pos) & 0x01;
+                return pop_result;
+            };
+
+            auto pop_bit_val = [&pop_bit](const std::vector<uint8_t> & bit_list, pop_bit_frame_t & frame, const uint64_t len)->uint64_t
+            {
+                uint64_t val = 0;
+                for (uint64_t i = 0; i < len; ++i)
+                {
+                    const auto bit = pop_bit(bit_list, frame);
+                    val |= bit;
+                    val <<= 1;
+                }
+
+                val >>= 1;
+                return val;
+            };
+
+            uint64_t offset = 0;
+            uint64_t current_bit_size = 1;
+            pop_bit_frame_t pop_frame = { };
+
+            struct rep_pure_t {
+                uint64_t data;
+                uint64_t bits;
+
+                bool operator < (const rep_pure_t & other) const { return data < other.data; }
+                bool operator == (const rep_pure_t & other) const { return (data == other.data) && (bits == other.bits); }
+                bool operator != (const rep_pure_t & other) const { return !this->operator==(other); }
+            };
+
+            std::map < rep_pure_t, uint8_t, std::less<> > flipped_pairs; // TODO: std::map is not the best option performance-wise
+            auto vec_to_uint64_t = [](const std::vector<uint8_t> & vec) {
+                uint64_t result = 0;
+                std::memcpy(&result, vec.data(), vec.size());
+                return result;
+            };
+
+            for (const auto & [byte, bitStream] : symbol_map) {
+                flipped_pairs.emplace(rep_pure_t{
+                    .data = vec_to_uint64_t(bitStream.data_buffer),
+                    .bits = bitStream.data_bits,
+                }, byte);
+            }
+
+            auto can_find_reference = [&](const uint64_t bit_offset, const uint64_t bit_size, uint8_t & decoded)->bool
+            {
+                pop_frame.r_pos = bit_offset;
+                const auto current_reference = pop_bit_val(input_stream, pop_frame, bit_size);
+                const auto reference = flipped_pairs.find(rep_pure_t{
+                    .data = current_reference,
+                    .bits = bit_size
+                });
+
+                if (reference == flipped_pairs.end()) {
+                    return false;
+                }
+
+                decoded = (reference->second);
+                return true;
+            };
+
+            while (offset < bits)
+            {
+                uint8_t decoded = 0;
+                while (!can_find_reference(offset, current_bit_size, decoded)) {
+                    current_bit_size++;
+                }
+
+                output_.push_back(decoded);
+                offset += current_bit_size;
+                current_bit_size = 1;
+            }
+        }
+
+    public:
+        Huffman (const std::vector<uint8_t> & input, std::vector <uint8_t> & output) : input_(input), output_(output) { }
+
+        void compress()
+        {
+            struct push_bit_frame_t {
+                uint64_t last_write_pos_in_last_byte = 0;
+            };
+
+            auto push_bit = [](std::vector < uint8_t > & bit_list, const bool bit, push_bit_frame_t & frame)
+            {
+                if (bit_list.empty()) {
+                    bit_list.push_back(bit);
+                    frame.last_write_pos_in_last_byte = 0;
+                    return;
+                }
+
+                if (frame.last_write_pos_in_last_byte < 7) {
+                    bit_list.back() <<= 1;
+                    bit_list.back() |= bit;
+                    ++frame.last_write_pos_in_last_byte;
+                } else {
+                    bit_list.back() = reverse_bits(bit_list.back());
+                    bit_list.push_back(bit);
+                    frame.last_write_pos_in_last_byte = 0;
+                }
+            };
+
+            auto finish_push = [](std::vector < uint8_t > & bit_list, push_bit_frame_t & frame)
+            {
+                if (frame.last_write_pos_in_last_byte < 7) {
+                    bit_list.back() <<= (7 - frame.last_write_pos_in_last_byte);
+                    bit_list.back() = reverse_bits(bit_list.back());
+                } else {
+                    bit_list.back() = reverse_bits(bit_list.back());
+                }
+            };
+
+            // construct Huffman table
             load_input_into_huffman_list();
             make_huffman_tree_from_huffman_list();
             walk_huffman_tree(root, {}, 0);
+
+            // write huffman table
+            // [UINT8: SYMBOLS]         0: 256, positive integers: 1 - 255
+            // [32 BYTE SYMBOL BITMAP]
+            // [UINT8]                  [BIT SIZE], [SYMBOLS] in len
+            // [[PACKED BITS]...]
+            // [BitSteam]
+            std::vector<uint8_t> huffman_table, symbol_bitmap(256 / 8, 0);
+            class sym_pos_bitmap_t : public bitmap_base
+            {
+            public:
+                explicit sym_pos_bitmap_t(std::vector < uint8_t > & bitmap_data)
+                {
+                    init_data_array = [&](const uint64_t)->bool
+                    {
+                        data_array_ = bitmap_data.data();
+                        return true;
+                    };
+
+                    init(256);
+                }
+            } sym_pos_bitmap(symbol_bitmap);
+
+            if (symbol_map.size() > 256) throw std::runtime_error("WTF");
+            huffman_table.push_back(symbol_map.size() == 256 ? 0 : static_cast<uint8_t>(symbol_map.size()));
+            for (const auto & [sym, rep] : symbol_map)
+            {
+                if (rep.data_bits > 255 || sym > 255) throw std::runtime_error("WTF");
+                sym_pos_bitmap.set_bit(sym, true);
+                huffman_table.push_back(*reinterpret_cast<const uint8_t *>(&rep.data_bits));
+            }
+            huffman_table.insert_range(huffman_table.begin() + 1, symbol_bitmap); // add bitmap after symbol size
+
+            std::vector<uint8_t> huffman_table_val_section; // [[PACKED BITS]...]
+            BitWriterLSB table_val_sec_writer(huffman_table_val_section);
+            for (const auto &[data_buffer, data_bits] : symbol_map | std::views::values)
+            {
+                uint64_t data = 0;
+                std::memcpy(&data, data_buffer.data(), data_buffer.size());
+                table_val_sec_writer.write(data, data_bits);
+            }
+
+            huffman_table.insert(huffman_table.end(), huffman_table_val_section.begin(), huffman_table_val_section.end());
+
+            std::vector<uint8_t> compressed_huffman_table;
+            lzw<12> LZW(huffman_table, compressed_huffman_table);
+            LZW.compress();
+            const auto table_size = static_cast<uint16_t>(compressed_huffman_table.size());
+
+            // write to buffer
+            output_.insert_range(output_.end(),
+                std::vector<uint8_t>{ reinterpret_cast<const uint8_t *>(&table_size),
+                    reinterpret_cast<const uint8_t *>(&table_size) + sizeof(table_size)
+                });
+            output_.insert_range(output_.end(), compressed_huffman_table);
+
+            std::vector<uint8_t> encoded_huffman_stream;
+            uint64_t bits_written = 0;
+            push_bit_frame_t push_frame;
+            auto push_data = [&](const int64_t data_len, const uint64_t data) {
+                for (int64_t i = data_len - 1; i >= 0; --i) {
+                    push_bit(encoded_huffman_stream, (data >> i) & 0x01, push_frame);
+                }
+            };
+
+            // encode
+            for (const auto & c : input_)
+            {
+                uint64_t data = 0;
+                const auto & [data_buffer, data_bits] = symbol_map.at(c);
+                std::memcpy(&data, data_buffer.data(), data_buffer.size());
+                push_data(static_cast<int64_t>(data_bits), data);
+                bits_written += data_bits;
+            }
+
+            output_.insert_range(output_.end(), std::vector<uint8_t>
+                { reinterpret_cast<const uint8_t *>(&bits_written), reinterpret_cast<const uint8_t *>(&bits_written) + sizeof(bits_written) });
+            output_.insert_range(output_.end(), encoded_huffman_stream);
+        }
+
+        void decompress()
+        {
+            uint16_t table_size = 0;
+            std::memcpy(&table_size, input_.data(), sizeof(table_size));
+            std::vector<uint8_t> huffman_table_lzw_compressed { input_.begin() + 2, input_.begin() + 2 + table_size }, huffman_table;
+            lzw<12> Decompressor(huffman_table_lzw_compressed, huffman_table);
+            Decompressor.decompress();
+
+            const int64_t symbol_count = huffman_table.front() == 0 ? 256 : huffman_table.front();
+            std::vector<uint8_t> symbol_bitmap { huffman_table.begin() + 1, huffman_table.begin() + 1 + 32 };
+            const class sym_pos_bitmap_t : public bitmap_base
+            {
+            public:
+                explicit sym_pos_bitmap_t(std::vector < uint8_t > & bitmap_data)
+                {
+                    init_data_array = [&](const uint64_t)->bool
+                    {
+                        data_array_ = bitmap_data.data();
+                        return true;
+                    };
+
+                    init(256);
+                }
+            } sym_pos_bitmap(symbol_bitmap);
+
+            std::vector < uint8_t > huffman_table_header_section {
+                huffman_table.begin() + 1 /* symbol size */ + 32 /* symbol bitmap */,
+                huffman_table.begin() + 1 + 32 + symbol_count
+            };
+            std::ranges::reverse(huffman_table_header_section);
+
+            const std::vector < uint8_t > huffman_table_data_section {
+                huffman_table.begin() + 1 + 32 + symbol_count,
+                huffman_table.end()
+            };
+
+            // read data by info from header section
+            BitReaderLSB reader(huffman_table_data_section);
+            for (uint64_t i = 0; i < 256; i++)
+            {
+                if (sym_pos_bitmap.get_bit(i))
+                {
+                    const auto symbol = static_cast<uint8_t>(i);
+                    const uint8_t sym_len = huffman_table_header_section.back();
+                    huffman_table_header_section.pop_back();
+
+                    // read symbol definition
+                    auto & [data_buffer, data_bits] = symbol_map[symbol];
+                    BitWriterLSB writer(data_buffer);
+                    writer.write(reader.read(sym_len), sym_len);
+                    data_bits = sym_len;
+                }
+            }
+
+            // and now, we have reconstructed our table
+            const std::vector<uint8_t> stream_byte_size { input_.begin() + 2 + table_size,
+                input_.begin() + 2 + table_size + sizeof(uint64_t) };
+            uint64_t stream_byte_size_lit = 0;
+            std::memcpy(&stream_byte_size_lit, stream_byte_size.data(), sizeof(stream_byte_size_lit));
+            const std::vector<uint8_t> dataStream { input_.begin() + 2 + table_size + sizeof(uint64_t), input_.end() };
+            decode_using_constructed_pairs(dataStream, stream_byte_size_lit);
         }
     };
 }
