@@ -74,6 +74,8 @@ int main(int argc, char** argv)
 
         if (compress)
         {
+            std::atomic < uint64_t > lzw_used(0);
+            std::atomic < uint64_t > huffman_used(0);
             const auto blocks = input_mmap.size() / block_size + (input_mmap.size() % block_size != 0);
             struct pool_frame_t {
                 std::vector<uint8_t> output;
@@ -100,12 +102,35 @@ int main(int argc, char** argv)
                 auto frame_ = std::make_unique<pool_frame_t>();
                 frame_->index = i;
 
-                thread_pool.emplace_back(std::thread([&input_mmap](pool_frame_t * frame)
+                thread_pool.emplace_back(std::thread([&](pool_frame_t * frame)
                 {
                     std::vector<uint8_t> input(input_mmap.data() + block_size * frame->index,
                         input_mmap.data() + std::min(static_cast<uint64_t>(input_mmap.size()), block_size * (frame->index + 1)));
-                    lzw::lzw<bit_size> Compressor(input, frame->output);
-                    Compressor.compress();
+                    {
+                        std::vector<uint8_t> output_huffman;
+                        std::vector<uint8_t> output_lzw;
+                        lzw::lzw<bit_size> Compressor(input, output_lzw);
+                        lzw::Huffman huffman(input, output_huffman);
+                        Compressor.compress();
+                        huffman.compress();
+
+                        auto write_buffer = [&](const std::vector<uint8_t> & buffer, const char signature)
+                        {
+                            frame->output.clear();
+                            frame->output.reserve(output_lzw.size() + 1);
+                            frame->output.push_back(signature);
+                            frame->output.insert(frame->output.end(), buffer.begin(), buffer.end());
+                        };
+
+                        if (output_huffman.size() > output_lzw.size()) {
+                            ++lzw_used;
+                            write_buffer(output_lzw, 'L');
+                        } else {
+                            ++huffman_used;
+                            write_buffer(output_huffman, 'H');
+                        }
+                    }
+
                     if (frame->output.size() > 0xFFFF) {
                         throw std::runtime_error("Compression failed for this data set");
                     }
@@ -121,6 +146,9 @@ int main(int argc, char** argv)
             }
 
             sync_thread();
+            const double lzw_perc = lzw_used / static_cast<double>(lzw_used + huffman_used);
+            fprintf(stderr, "LZW: %lu (%0.2f%%), Huffman: %lu (%0.2f%%), overall %lu * %lu\n",
+                lzw_used.load(), lzw_perc * 100, huffman_used.load(), (1 - lzw_perc)*100, lzw_used + huffman_used, block_size);
         }
         else
         {
@@ -163,8 +191,15 @@ int main(int argc, char** argv)
                 thread_pool.emplace_back(std::thread([](pool_frame_t * frame)
                 {
                     std::vector<uint8_t> input(frame->begin, frame->end);
-                    lzw::lzw<bit_size> Compressor(input, frame->output);
-                    Compressor.decompress();
+                    if (!input.empty() && input.front() == 'H') { // Huffman
+                        input.erase(input.begin());
+                        lzw::Huffman huffman(input, frame->output);
+                        huffman.decompress();
+                    } else {
+                        input.erase(input.begin());
+                        lzw::lzw<bit_size> Compressor(input, frame->output);
+                        Compressor.decompress();
+                    }
                 }, frame_.get()), std::move(frame_));
 
                 active_threads++;

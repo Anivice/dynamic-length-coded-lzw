@@ -82,11 +82,11 @@ namespace lzw
     >
     requires (LZWMaxBitSize <= 63)
     class lzw {
-        std::vector<uint8_t> & input_;
+        const std::vector<uint8_t> & input_;
         std::vector<uint8_t> & output_;
 
     public:
-        lzw(std::vector<uint8_t> & input, std::vector<uint8_t> & output)
+        lzw(const std::vector<uint8_t> & input, std::vector<uint8_t> & output)
             : input_(input), output_(output) { }
 
         void compress()
@@ -343,7 +343,7 @@ namespace lzw
         };
 
         std::list < HuffmanNode > huffman_list;
-        const std::vector <uint8_t> & input_;
+        std::vector <uint8_t> input_;
         std::vector <uint8_t> & output_;
         HuffmanNode * root = nullptr;
         struct symbol_rep_t
@@ -512,7 +512,7 @@ namespace lzw
         }
 
     public:
-        Huffman (const std::vector<uint8_t> & input, std::vector <uint8_t> & output) : input_(input), output_(output) { }
+        Huffman (std::vector<uint8_t> input, std::vector <uint8_t> & output) : input_(std::move(input)), output_(output) { }
 
         std::vector < uint64_t > export_symbols()
         {
@@ -532,8 +532,19 @@ namespace lzw
 
         void compress()
         {
+            output_.clear();
             // construct Huffman table
             load_input_into_huffman_list();
+            if (huffman_list.size() == 1)
+            {
+                output_.push_back(0x00);
+                output_.push_back(static_cast<uint8_t>(huffman_list.front().symbol_));
+                const uint64_t len = input_.size();
+                output_.insert_range(output_.end(), std::vector<uint8_t>{(uint8_t*)&len, (uint8_t*)&len+sizeof(uint64_t)});
+                return;
+            }
+
+            output_.push_back(0xAA);
             make_huffman_tree_from_huffman_list();
             walk_huffman_tree(root, {}, 0);
 
@@ -625,6 +636,22 @@ namespace lzw
 
         void decompress()
         {
+            if (input_.empty()) return;
+            if (input_.front() == 0x00) {
+                if (input_.size() == 2 + sizeof(uint64_t)) {
+                    uint64_t len;
+                    std::memcpy(&len, input_.data() + 2, sizeof(len));
+                    output_.resize(len, input_[1]);
+                    return;
+                }
+            }
+
+            if (input_.front() != 0xAA) {
+                throw std::runtime_error("Huffman table is invalid");
+            }
+
+            input_.erase(input_.begin());
+
             uint16_t table_size = 0; // LZW pack size
             std::memcpy(&table_size, input_.data(), sizeof(table_size));
             std::vector<uint8_t> huffman_table_lzw_compressed { input_.begin() + 2, input_.begin() + 2 + table_size }, huffman_table;
